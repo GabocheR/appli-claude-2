@@ -1,0 +1,50 @@
+name: Build APK
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Trouver le dossier du projet Android (là où se trouve settings.gradle.kts)
+        shell: bash
+        run: |
+          F=$(find . -name settings.gradle.kts -not -path '*/.git/*' | head -1)
+          if [ -z "$F" ]; then
+            echo "ERREUR : settings.gradle.kts introuvable dans le dépôt. Contenu :"; ls -R | head -50; exit 1
+          fi
+          D=$(dirname "$F")
+          echo "Projet trouvé dans : $D"
+          echo "PROJECT_DIR=$D" >> "$GITHUB_ENV"
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Accepter les licences du SDK Android (SDK déjà préinstallé sur le runner)
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          gradle-version: 8.9
+      - name: Compiler l'APK (debug, signé automatiquement)
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: gradle assembleDebug --no-daemon --stacktrace --console=plain 2>&1 | tee build.log
+      - name: Résumé des erreurs (à me copier si le build échoue)
+        if: failure()
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          echo "=============== ERREURS ==============="
+          grep -nE "^e: |error:|Could not|What went wrong|Execution failed|FAILED" -A4 build.log | head -150 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-log
+          path: ${{ env.PROJECT_DIR }}/build.log
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FVProfil-apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
